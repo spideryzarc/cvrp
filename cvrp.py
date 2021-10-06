@@ -2,6 +2,7 @@ import itertools
 from builtins import property
 
 import numpy as np
+import random as rd
 import os
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -275,7 +276,7 @@ class Heuristicas():
                 break
         assert self.cvrp.is_feasible(route)
         assert cost == self.cvrp.route_cost(route)
-        return route, cost
+        return cost, route
 
     def _next_fit(self, order):
         d = self.cvrp.d
@@ -568,26 +569,29 @@ class Heuristicas():
         assert self.cvrp.is_feasible(route)
         return chg, cost
 
-    def VND(self, route, cost=0):
+    def VND(self, route, cost=None):
+        if cost is None:
+            cost = self.cvrp.route_cost(route)
         imp = True
         while imp:
             np.random.shuffle(route)
-            # print(self.cvrp.route_cost(route))
             imp = False
             if not imp:
                 imp, cost = self.swap(route, cost)
-            # if not imp:
-            #     imp, cost = self.two_opt_star_best_imp(route, True, cost)
             if not imp:
                 imp, cost = self.replace(route, cost)
             if not imp:
                 imp, cost = self.two_opt_star(route, cost)
             if not imp:
                 imp, cost = self.intra_route(route, cost)
+        # eliminar rotas vazias
+        for r in range(len(route) - 1, -1, -1):
+            if len(route[r]) < 2:
+                del route[r]
 
         assert self.cvrp.is_feasible(route)
-
-        return cost
+        assert cost == self.cvrp.route_cost(route)
+        return cost, route
 
     def RMS(self, ite: int):
         n = self.cvrp.n
@@ -597,8 +601,7 @@ class Heuristicas():
         for i in range(ite):
             np.random.shuffle(order)
             route = self._next_fit_roll(order)
-            self.VND(route)
-            cost = self.cvrp.route_cost(route)
+            cost, route = self.VND(route)
             if best > cost:
                 best = cost
                 best_route = route
@@ -635,6 +638,8 @@ class Heuristicas():
             if lista.qsize() > 0:
                 # concatenar
                 i = np.random.randint(0, lista.qsize())
+                # w = np.array([x[0] for x in lista.queue])**-1
+                # i = rd.choices(range(lista.qsize()), weights=w)[0]
                 x, k, l = lista.queue[i]
                 route[k] = route[k] + route[l][1:]
                 # tsp.two_opt(route[k],c)
@@ -651,18 +656,18 @@ class Heuristicas():
     def GRASP(self, ite: int, nc: int):
         n = self.cvrp.n
         order = list(range(1, n))
-        best = np.inf
+        best_cost = np.inf
         best_route = None
         for i in range(ite):
             np.random.shuffle(order)
             route = self._greedy_random(nc)
             self.VND(route)
             cost = self.cvrp.route_cost(route)
-            if best > cost:
-                best = cost
+            if best_cost > cost:
+                best_cost = cost
                 best_route = route
-                print(i + 1, 'GRASP', best)
-        return best_route
+                print(i + 1, 'GRASP', best_cost)
+        return best_cost, best_route
 
     def _shake_tabu(self, route, k: int, tenure: int):
         # seleciona k rotas para a destruição
@@ -728,11 +733,106 @@ class Heuristicas():
                 best_cost = cost
                 best_route = deepcopy(route)
                 print(i + 1, 'Tabu', best_cost)
-                self.cvrp.plot(route=route, clear_edges=True, plt_show=False)
+                if self.plot:
+                    self.cvrp.plot(route=route, clear_edges=True, plt_show=False)
             elif best_cost * reset_factor < cost:
                 self.tabu_list.clear()
                 route = deepcopy(best_route)
                 # print('reset', cost)
 
         self.tabu_list = None
-        return best_route
+        return best_cost, best_route
+
+    def _get_edges_set(self, route):
+        edges = set()
+        for r in route:
+            edges.add((0, r[-1]))
+            for i in range(len(r)):
+                edges.add(tuple(sorted((r[i - 1], r[i]))))
+        return edges
+
+    def _route_dist(self, a, b):
+        edges_a = self._get_edges_set(a)
+        edges_b = self._get_edges_set(b)
+        return len(edges_a - edges_b)
+
+    def _ref_set_update(self, pop, size, elite=1):
+        pop.sort()
+
+        # remover individuos repetidos
+        for i in range(len(pop) - 1, -1, -1):
+            for j in range(i):
+                if self._route_dist(pop[i][1], pop[j][1]) == 0:
+                    del pop[i]
+                    break
+
+        pop = pop[:max(int(elite * len(pop)), size)]
+        n = len(pop)
+        d = np.zeros(shape=[n, n])
+        for i in range(n):
+            for j in range(i):
+                d[i, j] = d[j, i] = self._route_dist(pop[i][1], pop[j][1])
+        p = pop[0]
+        ref = [p]
+        dist = np.zeros(n)
+        for i in range(n):
+            dist[i] = d[0, i]
+        print(max(dist))
+        for k in range(1, size):
+            p_idx = np.argmax(dist)
+            p = pop[p_idx]
+            ref.append(p)
+            for i in range(n):
+                dist[i] = min(dist[i], d[p_idx, i])
+        return ref
+
+    def _comb_sols(self, sols):
+        n = self.cvrp.n
+        visited = np.zeros(n, dtype=bool)
+        visited[0] = True
+        petalas = []
+        for c, s in sols:
+            for r in s:
+                petalas.append(r)
+        np.random.shuffle(petalas)
+        route = []
+        for p in petalas:
+            r = [0] + [v for v in p if not visited[v]]
+            if len(r) >= 2:
+                visited[r] = True
+                route.append(r)
+        assert self.cvrp.is_feasible(route)
+        cost, route = self.Clarke_n_Wright(route)
+        cost, route = self.VND(route, cost)
+        # cost, route = self.VND(route)
+        return cost, route
+
+    def scatter_search(self, ite=100, ini_pop_size=20, ref_size=10, subset_size=3, grasp_k=10, diver=.7):
+        pop = []
+        print('Inicializando população')
+        order = list(range(1, self.cvrp.n))
+        for i in range(ini_pop_size):
+            route = self._greedy_random(grasp_k)
+            cost, route = self.VND(route)
+            print(i + 1, 'Pop.', cost)
+            pop.append((cost, route))
+        ref_set = self._ref_set_update(pop, ref_size, diver)
+        best_cost, best_route = ref_set[0]
+        print('0 SS', best_cost)
+        if self.plot:
+            self.cvrp.plot(route=best_route, clear_edges=True, plt_show=False)
+        for i in range(ite):
+            print('Geração', i + 1)
+            offspring = []
+            for sub_set in itertools.combinations(ref_set, subset_size):
+                s = self._comb_sols(sub_set)
+                offspring.append(s)
+            ref_set = self._ref_set_update(ref_set + offspring, ref_size, diver)
+            cost, route = ref_set[0]
+            if cost < best_cost:
+                best_cost, best_route = ref_set[0]
+                print(i + 1, 'SS', best_cost)
+                if self.plot:
+                    self.cvrp.plot(route=best_route, clear_edges=True, plt_show=False)
+
+        return best_cost, best_route

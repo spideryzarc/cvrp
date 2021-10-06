@@ -1,5 +1,6 @@
 from cvrp import CVRP, Gurobi_CVRP, Heuristicas
 import numpy as np
+import random as rd
 
 if __name__ == '__main__':
     if __debug__:
@@ -7,6 +8,7 @@ if __name__ == '__main__':
     else:
         print('mode debud DESATIVADO')
     np.random.seed(7)
+    rd.seed(7)
 
     # cvrp = CVRP('instances/toy-n11-k.vrp.txt')
     # cvrp = CVRP('instances/A-n32-k5.vrp.txt')
@@ -28,10 +30,11 @@ if __name__ == '__main__':
     # route = heuristicas.RMS(100)
     # heuristicas.plot = True
     # heuristicas.VND(route)
-    # route = heuristicas.GRASP(1000, 3)
-    route = heuristicas.tabu_search(1000, 2, 20)
+    # cost,route = heuristicas.GRASP(100, 3)
+    # route = heuristicas.tabu_search(1000, 2, 20)
     # print(cvrp.route_cost(route))
     # cvrp.plot(route=route)
+    cost, route = heuristicas.scatter_search(ite=100, ini_pop_size=50, ref_size=5, subset_size=2, diver=.5)
 
     print(cvrp.route_cost(route))
     cvrp.plot(route=route)
