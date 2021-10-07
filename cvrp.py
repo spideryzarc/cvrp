@@ -18,6 +18,9 @@ from copy import deepcopy
 
 
 class CVRP:
+    """
+    Representa uma instância de um problema de roteamento de veículos capacitado
+    """
     _graph = None
 
     @property
@@ -31,6 +34,7 @@ class CVRP:
 
     @property
     def c(self):
+        """ matriz de distâncias"""
         if self._c is None:
             self._c = np.round(np.matrix(data=squareform(pdist(self.coord))))
         return self._c
@@ -38,7 +42,10 @@ class CVRP:
     def __str__(self):
         return self.info['NAME']
 
-    def __init__(self, path):
+    def __init__(self, path: str):
+        """
+        :param path: Arquivo no formato cvrp da CVRPLIB
+        """
         assert os.path.exists(path), path + ' - arquivo não existe.'
         with open(path, 'r') as f:
             self.info = {}
@@ -50,9 +57,13 @@ class CVRP:
             assert self.info['EDGE_WEIGHT_TYPE'] == 'EUC_2D', 'tipo de distância não suportado: ' + self.info[
                 'EDGE_WEIGHT_TYPE']
             self.q = int(self.info['CAPACITY'])
+            """Capacidade"""
             self.n = int(self.info['DIMENSION'])
+            """Número de pontos"""
             self.k = int(self.info['NAME'].split('-k')[-1])
+            """Número mínimo de rotas"""
             self.coord = np.zeros(shape=[self.n, 2], dtype=float)
+            """Coordenadas no formato matriz nx2"""
             for i in range(self.n):
                 v = f.readline().split()
                 self.coord[i][0] = float(v[1])
@@ -62,17 +73,26 @@ class CVRP:
                 if ln.strip() == 'DEMAND_SECTION':
                     break
             self.d = np.zeros(self.n, dtype=int)
+            """Demandas"""
             for i in range(self.n):
                 v = f.readline().split()
                 self.d[i] = int(v[1])
-            # print(self.d)
-        return
+        pass
 
-    def plot(self, route=None, edges=None, clear_edges=True, plt_show=True, sleep_time=0.1):
+    def plot(self, routes=None, edges=None, clear_edges=True, stop=True, sleep_time=0.1):
+        """
+        Exibe a instância graficamente
+
+        :param routes: Solução (lista de listas)
+        :param edges: lista de arcos (lista de tuplas (i,j) )
+        :param clear_edges: limpar o último plot ou não
+        :param stop: Parar a execução ou não
+        :param sleep_time: Se stop for Falso, tempo de espera em segundos antes de prosseguir
+        """
         if clear_edges:
             self.graph.clear_edges()
-        if route is not None:
-            for r in route:
+        if routes is not None:
+            for r in routes:
                 for i in range(len(r) - 1):
                     self.graph.add_edge(r[i], r[i + 1])
                 self.graph.add_edge(r[-1], r[0])
@@ -83,27 +103,39 @@ class CVRP:
         color = ['#74BDCB' for i in range(self.n)]
         color[0] = '#FFA384'
         nx.draw_networkx(self.graph, self.coord, with_labels=True, node_size=120, font_size=8, node_color=color)
-        if plt_show:
+        if stop:
             plt.show()
         else:
             plt.draw()
             plt.pause(sleep_time)
-        return
+        pass
 
-    def route_cost(self, route):
+    def route_cost(self, routes):
+        """
+        Calcula o custo da solução
+
+        :param routes: Solução (lista de listas)
+        :return : float custo total
+        """
         cost = 0
-        for r in route:
+        for r in routes:
             for i in range(1, len(r)):
                 cost += self.c[r[i - 1], r[i]]
             cost += self.c[r[-1], r[0]]
         return cost
 
-    def is_feasible(self, route):
-        if max([self.d[r].sum() for r in route]) > self.q:
+    def is_feasible(self, routes):
+        """
+        Verifica se as restrições do problema foram satisfeitas ou não
+
+        :param routes: Solução (lista de listas)
+        :return : bool True se for uma solução viável
+        """
+        if max([self.d[r].sum() for r in routes]) > self.q:
             print("capacidade violada")
             return False
         count = np.zeros(self.n, dtype=int)
-        for r in route:
+        for r in routes:
             for i in r:
                 count[i] += 1
         if max(count[1:]) > 1:
@@ -116,6 +148,10 @@ class CVRP:
 
 
 class Gurobi_CVRP():
+    """
+    Classe que encapsula um modelo de programação inteira do CVRP
+    para resolução com o solver GUROBI
+    """
 
     def _init_model(self):
         m = self.model
@@ -125,6 +161,7 @@ class Gurobi_CVRP():
         d = self.cvrp.d
         q = self.cvrp.q
         self.x = x = np.zeros(shape=[n, n], dtype=gp.Var)
+        """Variáveis do modelo (x_ij)"""
 
         # variáveis e função objetivo
         for i in range(n):
@@ -152,24 +189,45 @@ class Gurobi_CVRP():
                     m.addConstr(sum(x[i, j] for i in s for j in ns) >= rS)
 
         m.update()
+        pass
 
     def __init__(self, cvrp: CVRP, row_generation=True, plot=False):
+        """
+
+        :param cvrp: Instância de um CVRP
+        :param row_generation: Se a estratégia de geração de linhas deve ser usada ou não
+        :param plot: Se as soluções parciais devem ser exibidas ou não
+        """
         self.row_generation = row_generation
         self.plot = plot
         self.cvrp = cvrp
         self.model = gp.Model()
         self._init_model()
-        self.model.write('model.lp')
+        # Gerar o 'modelo por extenso' para depuração
+        # self.model.write('model.lp')
+        pass
 
     def run(self):
+        """
+        Executa o solver
+        :return: lista de arcos (i,j) da solução ótima
+        """
+
         def cut(model, where):
+            """
+            Função usada como callback que adiciona restrições omitidas que tenham sido
+            violadas
+
+            :param model: Variável do gurobi referente ao modelo em execução
+            :param where: Variável do gurobi referente a etapa do algoritmo em execução
+            """
             if where == GRB.Callback.MIPSOL:
                 n = self.cvrp.n
                 edges = [(i, j) for i in range(n) for j in range(n) if
                          i != j and model.cbGetSolution(self.x[i, j]) > 0.5]
 
                 if self.plot:  # solução viável
-                    self.cvrp.plot(edges=edges, clear_edges=True, plt_show=False)
+                    self.cvrp.plot(edges=edges, clear_edges=True, stop=False)
 
                 # separação
                 while len(edges) > 0:
@@ -189,29 +247,34 @@ class Gurobi_CVRP():
                         s = set(route) - {0}
                         ns = set(range(n)) - s
                         lb = int(np.ceil(self.cvrp.d[route].sum() / self.cvrp.q))
-                        # print(route, lb)
                         model.cbLazy(sum(self.x[i, j] for i in s for j in ns) >= lb)
-                        sep = True
                     elif 0 not in route:
                         ns = set(range(n)) - set(route)
                         model.cbLazy(sum(self.x[i, j] for i in route for j in ns) >= 1)
-                        sep = True
+            pass
 
-        self.model.Params.lazyConstraints = 1
         if self.row_generation:
+            self.model.Params.lazyConstraints = 1
             self.model.optimize(cut)
         else:
             self.model.optimize()
+
         n = self.cvrp.n
         edges = [(i, j) for i in range(n) for j in range(n) if i != j and self.x[i, j].X > 0.5]
         return edges
 
 
 class Heuristicas():
+    """
+    Classe com método heurísticos para o CVRP
+    """
     _saving = None
 
     @property
     def saving(self):
+        """
+        Matriz de valores de 'savings' (c[i, 0] + c[0, j] - c[i, j])
+        """
         if self._saving is None:
             c = self.cvrp.c
             n = self.cvrp.n
@@ -224,37 +287,48 @@ class Heuristicas():
         return self._saving
 
     def __init__(self, cvrp: CVRP, plot=False):
+        """
+
+        :param cvrp: Instância de um CVRP
+        :param plot: Se as soluções parciais devem ser exibidas ou não
+        """
         self.cvrp = cvrp
         self.plot = plot
         self.tabu_list = None
+        pass
 
-    def Clarke_n_Wright(self, route=None):
-        # Algoritmo de saving
+    def Clarke_n_Wright(self, routes=None):
+        """
+        Aplica o algoritmo de Clarke and Wright
+
+        :param routes: Solução (lista de listas), caso seja passada uma solução,
+        o algoritmo se ocupa de tentar mesclar as rotas existentes nesta solução.
+        :return : tupla (custo, solução)
+        """
         n = self.cvrp.n
-        c = self.cvrp.c
         d = self.cvrp.d
         q = self.cvrp.q
 
         # cria n rotas triviais
-        if route is None:
-            route = [[0, i] for i in range(1, n)]
+        if routes is None:
+            routes = [[0, i] for i in range(1, n)]
             load = [d[i] for i in range(1, n)]
         else:
-            for i in reversed(range(len(route))):
-                if len(route[i]) <= 1:
-                    del route[i]
-            load = [d[r].sum() for r in route]
+            for i in reversed(range(len(routes))):
+                if len(routes[i]) <= 1:
+                    del routes[i]
+            load = [d[r].sum() for r in routes]
 
         # calcular os 'savings'
         s = self.saving
 
-        cost = self.cvrp.route_cost(route)
+        cost = self.cvrp.route_cost(routes)
         # concatenar rotas
         while True:
             argmax = None
             maxval = 0
-            for k, rk in enumerate(route):
-                for l, rl in enumerate(route):
+            for k, rk in enumerate(routes):
+                for l, rl in enumerate(routes):
                     if (k != l) and maxval < s[rk[-1], rl[1]] and load[k] + load[l] <= q:
                         # adaptação para o tabu
                         if self.tabu_list is not None:
@@ -262,23 +336,31 @@ class Heuristicas():
                                 continue
                         argmax = k, l
                         maxval = s[rk[-1], rl[1]]
+
             if argmax is not None:
                 # concatenar
                 k, l = argmax
-                cost -= s[route[k][-1], route[l][1]]
-                route[k] = route[k] + route[l][1:]
+                cost -= s[routes[k][-1], routes[l][1]]
+                routes[k] = routes[k] + routes[l][1:]
                 load[k] += load[l]
-                del route[l]
+                del routes[l]
                 del load[l]
                 if self.plot:
-                    self.cvrp.plot(route=route, clear_edges=True, plt_show=False)
+                    self.cvrp.plot(routes=routes, clear_edges=True, stop=False)
             else:
                 break
-        assert self.cvrp.is_feasible(route)
-        assert cost == self.cvrp.route_cost(route)
-        return cost, route
+        assert self.cvrp.is_feasible(routes)
+        assert cost == self.cvrp.route_cost(routes)
+        return cost, routes
 
     def _next_fit(self, order):
+        """
+         Constrói uma solução viável visitando os clientes na ordem estabelecida pela
+         lista 'order'
+
+         :param order: lista ordenada de clientes
+         :return : solução (lista de listas)
+         """
         d = self.cvrp.d
         q = self.cvrp.q
         route = []
@@ -293,11 +375,18 @@ class Heuristicas():
                 r = [0, i]
                 load = d[i]
             if self.plot:
-                self.cvrp.plot(route=route + [r], clear_edges=True, plt_show=False)
+                self.cvrp.plot(routes=route + [r], clear_edges=True, stop=False)
         route.append(r)
         return route
 
     def _next_fit_roll(self, order):
+        """
+        Constrói soluções viáveis visitando os clientes na ordem estabelecida pela lista
+        'order' e todas suas rotações.
+
+        :param order: lista ordenada de clientes
+        :return : melhor solução explorada(lista de listas)
+         """
         best = np.inf
         best_route = None
         for i in range(len(order)):
@@ -310,19 +399,31 @@ class Heuristicas():
         return best_route
 
     def tsp_fit(self):
+        """
+        Constrói soluções viáveis visitando os clientes na ordem estabelecida por
+        uma heurística para o PCV/TSP e todas suas rotações.
+
+        :return : melhor solução explorada (lista de listas)
+        """
         c = self.cvrp.c
         cost, order = tsp.heuristica1(c)
-        route = self._next_fit(order[1:])
+        route = self._next_fit_roll(order[1:])
         assert self.cvrp.is_feasible(route)
         return route
 
     def angular_fit(self):
+        """
+        Constrói soluções viáveis visitando os clientes na ordem estabelecida pela
+        varredura angular em relação ao depósito e todas suas rotações.
+
+        :return : melhor solução explorada (lista de listas)
+        """
         n = self.cvrp.n
         c = self.cvrp.c
         # coordenadas deslocada para origem
         coord = self.cvrp.coord - self.cvrp.coord[0]
         order = sorted(range(1, n), key=lambda a: np.arctan2(coord[a][0], coord[a][1]), reverse=True)
-        route = self._next_fit(order)
+        route = self._next_fit_roll(order)
         assert self.cvrp.is_feasible(route)
         return route
 
@@ -339,7 +440,7 @@ class Heuristicas():
                 if imp:
                     chg = True
             if self.plot:
-                self.cvrp.plot(route=route, clear_edges=True, plt_show=False)
+                self.cvrp.plot(routes=route, clear_edges=True, stop=False)
         if chg:
             cost = self.cvrp.route_cost(route)
         assert self.cvrp.is_feasible(route)
@@ -398,7 +499,7 @@ class Heuristicas():
                         chg = imp = True
                         cost += min_val + rem_cost
                         if self.plot:
-                            self.cvrp.plot(route=route + [ra], clear_edges=True, plt_show=False)
+                            self.cvrp.plot(routes=route + [ra], clear_edges=True, stop=False)
                         break
         assert self.cvrp.is_feasible(route)
         return chg, cost
@@ -440,7 +541,7 @@ class Heuristicas():
                                     vi, vj = vj, vi
                                     cost += delta
                                     if self.plot:
-                                        self.cvrp.plot(route=route + [ra], clear_edges=True, plt_show=False)
+                                        self.cvrp.plot(routes=route + [ra], clear_edges=True, stop=False)
         assert self.cvrp.is_feasible(route)
         return chg, cost
 
@@ -484,7 +585,7 @@ class Heuristicas():
                                     chg = imp = True
                                     cost += delta
                                     if self.plot:
-                                        self.cvrp.plot(route=route + [ra], clear_edges=True, plt_show=False)
+                                        self.cvrp.plot(routes=route + [ra], clear_edges=True, stop=False)
                                     break
                             delta = c[vnj, vni] + c[vi, vj] - c[vi, vni] - c[vj, vnj]
                             if delta < -1e-3:
@@ -504,7 +605,7 @@ class Heuristicas():
                                     chg = imp = True
                                     cost += delta
                                     if self.plot:
-                                        self.cvrp.plot(route=route + [ra], clear_edges=True, plt_show=False)
+                                        self.cvrp.plot(routes=route + [ra], clear_edges=True, stop=False)
                                     break
 
                         if imp:
@@ -563,7 +664,7 @@ class Heuristicas():
                 chg = imp = True
                 cost += min_delta
                 if self.plot:
-                    self.cvrp.plot(route=route + [ra], clear_edges=True, plt_show=False)
+                    self.cvrp.plot(routes=route + [ra], clear_edges=True, stop=False)
                 if return_at_first:
                     break
         assert self.cvrp.is_feasible(route)
@@ -647,7 +748,7 @@ class Heuristicas():
                 del route[l]
                 del load[l]
                 if self.plot:
-                    self.cvrp.plot(route=route, clear_edges=True, plt_show=False)
+                    self.cvrp.plot(routes=route, clear_edges=True, stop=False)
             else:
                 break
         assert self.cvrp.is_feasible(route)
@@ -669,7 +770,7 @@ class Heuristicas():
                 print(i + 1, 'GRASP', best_cost)
         return best_cost, best_route
 
-    def _shake_tabu(self, route, k: int, tenure: int):
+    def _shake(self, route, k=1, tenure=0):
         # seleciona k rotas para a destruição
         destruct_list = list(range(len(route)))
         np.random.shuffle(destruct_list)
@@ -680,26 +781,19 @@ class Heuristicas():
         cost = self.cvrp.route_cost(route)
         for r in destruct_list:
             v.extend(route[r][1:])
-            # cria tabu
-            self.tabu_list.append((set(route[r]), cost))
-            if len(self.tabu_list) > tenure:
-                del self.tabu_list[0]
+            if self.tabu_list is not None:
+                # cria tabu
+                self.tabu_list.append((set(route[r]), cost))
+                if len(self.tabu_list) > tenure:
+                    del self.tabu_list[0]
             del route[r]
-        # v = []
-        # for i in range(k):
-        #     nr = len(route)
-        #     r = route[np.random.randint(0, nr - 1)]
-        #     if len(r) > 2:
-        #         x = np.random.randint(1, len(r) - 1)
-        #         v.append(r[x])
-        #         del r[x]
 
         # cria n rotas triviais
         for r in v:
             route.append([0, r])
 
-        route, cost = self.Clarke_n_Wright(route)
-        return cost
+        cost, route = self.Clarke_n_Wright(route)
+        return cost, route
 
     def _is_tabu(self, r, cost):
         if r is not set:
@@ -718,14 +812,14 @@ class Heuristicas():
     def tabu_search(self, ite: int, k: int, tenure: int, reset_factor=1.05):
         self.tabu_list = []
         n = self.cvrp.n
-        best_route, best_cost = self.Clarke_n_Wright()
-        best_cost = self.VND(best_route, best_cost)
+        best_cost, best_route = self.Clarke_n_Wright()
+        best_cost, best_route = self.VND(best_route, best_cost)
         print(0, 'Tabu', best_cost)
         assert best_cost == self.cvrp.route_cost(best_route)
         route = deepcopy(best_route)
         for i in range(ite):
-            cost = self._shake_tabu(route, k, tenure)
-            cost = self.VND(route, cost)
+            cost, route = self._shake(route, k, tenure)
+            cost, route = self.VND(route, cost)
             assert cost == self.cvrp.route_cost(route)
             # print(cost)
             if best_cost > cost:
@@ -734,7 +828,7 @@ class Heuristicas():
                 best_route = deepcopy(route)
                 print(i + 1, 'Tabu', best_cost)
                 if self.plot:
-                    self.cvrp.plot(route=route, clear_edges=True, plt_show=False)
+                    self.cvrp.plot(routes=route, clear_edges=True, stop=False)
             elif best_cost * reset_factor < cost:
                 self.tabu_list.clear()
                 route = deepcopy(best_route)
@@ -777,7 +871,7 @@ class Heuristicas():
         dist = np.zeros(n)
         for i in range(n):
             dist[i] = d[0, i]
-        print(max(dist))
+        # print(max(dist))
         for k in range(1, size):
             p_idx = np.argmax(dist)
             p = pop[p_idx]
@@ -807,7 +901,8 @@ class Heuristicas():
         # cost, route = self.VND(route)
         return cost, route
 
-    def scatter_search(self, ite=100, ini_pop_size=20, ref_size=10, subset_size=3, grasp_k=10, diver=.7):
+    def scatter_search(self, ite=100, ini_pop_size=20, ref_size=10, subset_size=3, grasp_k=10, diver=.7,
+                       mut_factor=0.1):
         pop = []
         print('Inicializando população')
         order = list(range(1, self.cvrp.n))
@@ -820,19 +915,26 @@ class Heuristicas():
         best_cost, best_route = ref_set[0]
         print('0 SS', best_cost)
         if self.plot:
-            self.cvrp.plot(route=best_route, clear_edges=True, plt_show=False)
+            self.cvrp.plot(routes=best_route, clear_edges=True, stop=False)
         for i in range(ite):
             print('Geração', i + 1)
             offspring = []
             for sub_set in itertools.combinations(ref_set, subset_size):
                 s = self._comb_sols(sub_set)
                 offspring.append(s)
+
+            for k in range(len(offspring)):
+                if rd.random() < mut_factor:
+                    # print('Mutação')
+                    cost, route = self._shake(offspring[k][1], k=2)
+                    cost, route = self.VND(route)
+                    offspring[k] = cost, route
             ref_set = self._ref_set_update(ref_set + offspring, ref_size, diver)
             cost, route = ref_set[0]
             if cost < best_cost:
-                best_cost, best_route = ref_set[0]
+                best_cost, best_route = deepcopy(ref_set[0])
                 print(i + 1, 'SS', best_cost)
                 if self.plot:
-                    self.cvrp.plot(route=best_route, clear_edges=True, plt_show=False)
+                    self.cvrp.plot(routes=best_route, clear_edges=True, stop=False)
 
         return best_cost, best_route

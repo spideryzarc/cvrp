@@ -25,16 +25,16 @@ if __name__ == '__main__':
     heuristicas = Heuristicas(cvrp, plot=False)
     # route = heuristicas.Clarke_n_Wright()
     # route = heuristicas.tsp_fit()
-    # route = heuristicas.angular_fit()
+    route = heuristicas.angular_fit()
 
     # route = heuristicas.RMS(100)
     # heuristicas.plot = True
     # heuristicas.VND(route)
     # cost,route = heuristicas.GRASP(100, 3)
-    # route = heuristicas.tabu_search(1000, 2, 20)
+    # cost, route = heuristicas.tabu_search(500, 2, 10)
     # print(cvrp.route_cost(route))
     # cvrp.plot(route=route)
-    cost, route = heuristicas.scatter_search(ite=100, ini_pop_size=50, ref_size=5, subset_size=2, diver=.5)
+    # cost, route = heuristicas.scatter_search(ite=100, ini_pop_size=50, ref_size=5, subset_size=2, diver=.7)
 
     print(cvrp.route_cost(route))
-    cvrp.plot(route=route)
+    cvrp.plot(routes=route)
