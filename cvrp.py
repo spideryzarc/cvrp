@@ -207,7 +207,7 @@ class Gurobi_CVRP():
         # self.model.write('model.lp')
         pass
 
-    def run(self):
+    def run(self, route=None):
         """
         Executa o solver
         :return: lista de arcos (i,j) da solução ótima
@@ -252,6 +252,13 @@ class Gurobi_CVRP():
                         ns = set(range(n)) - set(route)
                         model.cbLazy(sum(self.x[i, j] for i in route for j in ns) >= 1)
             pass
+
+        if route is not None:
+            #initial solution
+            for r in route:
+                for i in range(1,len(r)):
+                    self.x[r[i-1],r[i]].Start = 1
+                self.x[r[-1], r[0]].Start = 1
 
         if self.row_generation:
             self.model.Params.lazyConstraints = 1

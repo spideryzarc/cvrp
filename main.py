@@ -11,10 +11,15 @@ if __name__ == '__main__':
     rd.seed(7)
 
     # cvrp = CVRP('instances/toy-n11-k.vrp.txt')
-    # cvrp = CVRP('instances/A-n32-k5.vrp.txt')
-    cvrp = CVRP('instances/A-n80-k10.vrp.txt')
-    # model = Gurobi_CVRP(cvrp,row_generation=True, plot=False)
-    # edges = model.run()
+    cvrp = CVRP('instances/A-n32-k5.vrp.txt')
+    # cvrp = CVRP('instances/A-n80-k10.vrp.txt')
+    heuristicas = Heuristicas(cvrp, plot=False)
+
+    model = Gurobi_CVRP(cvrp,row_generation=True, plot=False)
+    cost,route = heuristicas.Clarke_n_Wright()
+    cost,route = heuristicas.VND(route,cost)
+    print(cost)
+    edges = model.run(route)
     # cvrp.plot(edges=edges)
     # exit(0)
 
@@ -22,10 +27,9 @@ if __name__ == '__main__':
 
     print(cvrp)
 
-    heuristicas = Heuristicas(cvrp, plot=False)
     # route = heuristicas.Clarke_n_Wright()
     # route = heuristicas.tsp_fit()
-    route = heuristicas.angular_fit()
+    # route = heuristicas.angular_fit()
 
     # route = heuristicas.RMS(100)
     # heuristicas.plot = True
