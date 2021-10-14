@@ -1,5 +1,5 @@
 import itertools
-from builtins import property
+from builtins import property, reversed
 
 import numpy as np
 import random as rd
@@ -15,6 +15,19 @@ from gurobipy import GRB
 import tsp
 from queue import PriorityQueue
 from copy import deepcopy
+
+import time
+
+
+def timeit(f):
+    def timed(*args, **kw):
+        ts = time.time()
+        result = f(*args, **kw)
+        te = time.time()
+        print('func:%r args:[%r, %r] took: %2.4f sec' % (f.__name__, args, kw, te - ts))
+        return result
+
+    return timed
 
 
 class CVRP:
@@ -254,10 +267,10 @@ class Gurobi_CVRP():
             pass
 
         if route is not None:
-            #initial solution
+            # initial solution
             for r in route:
-                for i in range(1,len(r)):
-                    self.x[r[i-1],r[i]].Start = 1
+                for i in range(1, len(r)):
+                    self.x[r[i - 1], r[i]].Start = 1
                 self.x[r[-1], r[0]].Start = 1
 
         if self.row_generation:
@@ -304,9 +317,19 @@ class Heuristicas():
         self.tabu_list = None
         pass
 
+    _max_saving = None
+
+    @property
+    def max_saving(self):
+        if self._max_saving is None:
+            s = self.saving
+            self._max_saving = [s[i, :].max() for i in range(len(s))]
+        return self._max_saving
+
+    # @timeit
     def Clarke_n_Wright(self, routes=None):
         """
-        Aplica o algoritmo de Clarke and Wright
+        Aplica o algoritmo de Clarke and Wright paralelo
 
         :param routes: Solução (lista de listas), caso seja passada uma solução,
         o algoritmo se ocupa de tentar mesclar as rotas existentes nesta solução.
@@ -319,43 +342,50 @@ class Heuristicas():
         # cria n rotas triviais
         if routes is None:
             routes = [[0, i] for i in range(1, n)]
-            load = [d[i] for i in range(1, n)]
         else:
             for i in reversed(range(len(routes))):
                 if len(routes[i]) <= 1:
                     del routes[i]
-            load = [d[r].sum() for r in routes]
 
+        load_r_zipped = [[d[r].sum(), r] for r in routes]
         # calcular os 'savings'
         s = self.saving
 
         cost = self.cvrp.route_cost(routes)
         # concatenar rotas
+        max_s = self.max_saving
         while True:
             argmax = None
-            maxval = 0
-            for k, rk in enumerate(routes):
-                for l, rl in enumerate(routes):
-                    if (k != l) and maxval < s[rk[-1], rl[1]] and load[k] + load[l] <= q:
+            max_val = 0
+            load_r_zipped.sort(key=lambda a: max_s[a[1][-1]], reverse=True)
+            for k, rk in enumerate(load_r_zipped):
+                if max_s[rk[1][-1]] <= max_val:
+                    break
+                for l, rl in enumerate(load_r_zipped):
+                    if (k != l) and max_val < s[rk[1][-1], rl[1][1]] and rk[0] + rl[0] <= q:
                         # adaptação para o tabu
                         if self.tabu_list is not None:
-                            if self._is_tabu(rk + rl[1:], cost - s[rk[-1], rl[1]]):
+                            if self._is_tabu(rk[1] + rl[1][1:], cost - s[rk[1][-1], rl[1][1]]):
                                 continue
                         argmax = k, l
-                        maxval = s[rk[-1], rl[1]]
+                        max_val = s[rk[1][-1], rl[1][1]]
 
             if argmax is not None:
                 # concatenar
                 k, l = argmax
-                cost -= s[routes[k][-1], routes[l][1]]
-                routes[k] = routes[k] + routes[l][1:]
-                load[k] += load[l]
-                del routes[l]
-                del load[l]
+                cost -= s[load_r_zipped[k][1][-1], load_r_zipped[l][1][1]]
+                load_r_zipped[k][1].extend(load_r_zipped[l][1][1:])
+                load_r_zipped[l][1].clear()
+                load_r_zipped[k][0] += load_r_zipped[l][0]
+                del load_r_zipped[l]
                 if self.plot:
                     self.cvrp.plot(routes=routes, clear_edges=True, stop=False)
             else:
                 break
+
+        for i in reversed(range(len(routes))):
+            if len(routes[i]) <= 1:
+                del routes[i]
         assert self.cvrp.is_feasible(routes)
         assert cost == self.cvrp.route_cost(routes)
         return cost, routes
@@ -719,47 +749,56 @@ class Heuristicas():
     def _greedy_random(self, nc: int):
         # Algoritmo de saving
         n = self.cvrp.n
-        c = self.cvrp.c
         d = self.cvrp.d
         q = self.cvrp.q
 
         # cria n rotas triviais
-        route = [[0, i] for i in range(1, n)]
-        load = [d[i] for i in range(1, n)]
+        routes = [[0, i] for i in range(1, n)]
+        # load = [d[i] for i in range(1, n)]
+        load_r_zipped = [[d[r].sum(), r] for r in routes]
 
         lista = PriorityQueue()
 
         # calcular os 'savings'
         s = self.saving
-
+        cost = self.cvrp.route_cost(routes)
+        max_s = self.max_saving
         # concatenar rotas
         while True:
             lista.queue.clear()
-            for k, rk in enumerate(route):
-                for l, rl in enumerate(route):
-                    if (k != l) and load[k] + load[l] <= q:
-                        saving = s[rk[-1], rl[1]]
+            max_val = 0
+            load_r_zipped.sort(key=lambda a: max_s[a[1][-1]], reverse=True)
+            for k, rk in enumerate(load_r_zipped):
+                if max_s[rk[1][-1]] <= max_val:
+                    break
+                for l, rl in enumerate(load_r_zipped):
+                    if (k != l) and max_val < s[rk[1][-1], rl[1][1]] and rk[0] + rl[0] <= q:
+                        saving = s[rk[1][-1], rl[1][1]]
                         if lista.qsize() < nc or saving > lista.queue[0][0]:
                             lista.put((saving, k, l))
                             if lista.qsize() > nc:
                                 lista.get()
+                            max_val = lista.queue[0][0]
             if lista.qsize() > 0:
                 # concatenar
                 i = np.random.randint(0, lista.qsize())
-                # w = np.array([x[0] for x in lista.queue])**-1
-                # i = rd.choices(range(lista.qsize()), weights=w)[0]
                 x, k, l = lista.queue[i]
-                route[k] = route[k] + route[l][1:]
-                # tsp.two_opt(route[k],c)
-                load[k] += load[l]
-                del route[l]
-                del load[l]
+                cost -= s[load_r_zipped[k][1][-1], load_r_zipped[l][1][1]]
+                load_r_zipped[k][1].extend(load_r_zipped[l][1][1:])
+                load_r_zipped[l][1].clear()
+                load_r_zipped[k][0] += load_r_zipped[l][0]
+                del load_r_zipped[l]
                 if self.plot:
-                    self.cvrp.plot(routes=route, clear_edges=True, stop=False)
+                    self.cvrp.plot(routes=routes, clear_edges=True, stop=False)
             else:
                 break
-        assert self.cvrp.is_feasible(route)
-        return route
+
+        for i in reversed(range(len(routes))):
+            if len(routes[i]) <= 1:
+                del routes[i]
+        assert self.cvrp.is_feasible(routes)
+        assert cost == self.cvrp.route_cost(routes)
+        return cost, routes
 
     def GRASP(self, ite: int, nc: int):
         n = self.cvrp.n
@@ -768,9 +807,8 @@ class Heuristicas():
         best_route = None
         for i in range(ite):
             np.random.shuffle(order)
-            route = self._greedy_random(nc)
-            self.VND(route)
-            cost = self.cvrp.route_cost(route)
+            cost, route = self._greedy_random(nc)
+            cost, route = self.VND(route, cost)
             if best_cost > cost:
                 best_cost = cost
                 best_route = route
@@ -912,10 +950,9 @@ class Heuristicas():
                        mut_factor=0.1):
         pop = []
         print('Inicializando população')
-        order = list(range(1, self.cvrp.n))
         for i in range(ini_pop_size):
-            route = self._greedy_random(grasp_k)
-            cost, route = self.VND(route)
+            cost, route = self._greedy_random(grasp_k)
+            cost, route = self.VND(route, cost)
             print(i + 1, 'Pop.', cost)
             pop.append((cost, route))
         ref_set = self._ref_set_update(pop, ref_size, diver)
