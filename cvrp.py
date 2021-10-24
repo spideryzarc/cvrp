@@ -868,8 +868,7 @@ class Heuristicas():
         # cria rotas triviais para os clientes sem rotas
         for i in v:
             sol.append([0, i])
-
-        cost, sol = self.Clarke_n_Wright(sol)
+        cost = self.cvrp.route_cost(sol)
         return cost, sol
 
     def _is_tabu(self, r: [list, set], cost: float):
@@ -918,6 +917,36 @@ class Heuristicas():
                 current_sol = deepcopy(best_sol)
 
         self.tabu_list = None
+        return best_cost, best_sol
+
+    @timeit
+    def ils(self, ite: int, k: int, reset_factor=1.05):
+        """
+        Executa a meta-heurística iterated local search
+
+        :param ite: número de iterações
+        :param k: número de rotas destruídas por pertubação
+        :param reset_factor: desvio máximo entre a melhor solução e a solução corrente para forçar reset da lista tabu
+        :return: tupla (custo, solução)
+        """
+        best_cost, best_sol = self.Clarke_n_Wright()
+        best_cost, best_sol = self.VND(best_sol, best_cost)
+        print(0, 'ILS', best_cost)
+        current_sol = deepcopy(best_sol)
+        current_cost = best_cost
+        for i in range(ite):
+            current_cost, current_sol = self._shake(current_sol, current_cost, k)
+            current_cost, current_sol = self.VND(current_sol, current_cost)
+            # print(current_cost)
+            if best_cost > current_cost:
+                best_cost = current_cost
+                best_sol = deepcopy(current_sol)
+                print(i + 1, 'ILS', best_cost)
+                if self.plot:
+                    self.cvrp.plot(routes=current_sol, clear_edges=True, stop=False)
+            elif best_cost * reset_factor < current_cost:
+                # print('reset')
+                current_sol = deepcopy(best_sol)
         return best_cost, best_sol
 
     @staticmethod
@@ -987,10 +1016,12 @@ class Heuristicas():
             if len(r) >= 2:
                 visited[r] = True
                 new_sol.append(r)
+
         assert self.cvrp.is_feasible(new_sol)
         cost, new_sol = self.Clarke_n_Wright(new_sol)
-        imp, cost = self.intra_route(new_sol, cost)
-        cost, new_sol = self.VND(new_sol, cost)
+        if len(new_sol) == len(sols[1][1]):
+            cost, new_sol = self.VND(new_sol, cost)
+
         return cost, new_sol
 
     @timeit
@@ -1053,6 +1084,5 @@ class Heuristicas():
                 print(f'\n{i + 1} SS  {best_cost} ')
                 if self.plot:
                     self.cvrp.plot(routes=best_route, clear_edges=True, stop=False)
-
 
         return best_cost, best_route
