@@ -6,7 +6,7 @@ if __name__ == '__main__':
     if __debug__:
         print('modo debug ATIVADO')
     else:
-        print('mode debud DESATIVADO')
+        print('mode debug DESATIVADO')
     np.random.seed(7)
     rd.seed(7)
 
@@ -37,7 +37,7 @@ if __name__ == '__main__':
     # cost, route = heuristicas.tabu_search(500, 2, 20)
     # print(cvrp.route_cost(route))
     # cvrp.plot(route=route)
-    cost, route = heuristicas.scatter_search(ite=50, ini_pop_size=100, ref_size=10, subset_size=2)
+    cost, route = heuristicas.scatter_search(ite=50, ini_pop_size=100, ref_size=5, subset_size=3)
     # cost, route = heuristicas.ils(500, 1)
     print(cvrp.route_cost(route))
     cvrp.plot(routes=route)

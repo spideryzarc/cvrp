@@ -102,7 +102,7 @@ class CVRP:
                 self.d[i] = int(v[1])
         pass
 
-    def plot(self, routes=None, edges=None, clear_edges=True, stop=True, sleep_time=0.1):
+    def plot(self, routes=None, edges=None, clear_edges=True, stop=True, sleep_time=0.01):
         """
         Exibe a instância graficamente
 
@@ -116,9 +116,10 @@ class CVRP:
             self.graph.clear_edges()
         if routes is not None:
             for r in routes:
-                for i in range(len(r) - 1):
-                    self.graph.add_edge(r[i], r[i + 1])
-                self.graph.add_edge(r[-1], r[0])
+                if len(r) > 1:
+                    for i in range(len(r) - 1):
+                        self.graph.add_edge(r[i], r[i + 1])
+                    self.graph.add_edge(r[-1], r[0])
         if edges is not None:
             for i, j in edges:
                 self.graph.add_edge(i, j)
@@ -937,7 +938,8 @@ class Heuristicas():
         for i in range(ite):
             current_cost, current_sol = self._shake(current_sol, current_cost, k)
             current_cost, current_sol = self.VND(current_sol, current_cost)
-            # print(current_cost)
+            if self.plot:
+                self.cvrp.plot(routes=current_sol, clear_edges=True, stop=False)
             if best_cost > current_cost:
                 best_cost = current_cost
                 best_sol = deepcopy(current_sol)
@@ -955,7 +957,7 @@ class Heuristicas():
         for r in route:
             edges.add((0, r[-1]))
             for i in range(len(r)):
-                edges.add(tuple(sorted((r[i - 1], r[i]))))
+                edges.add(tuple(sorted([r[i - 1], r[i]])))
         return edges
 
     # def _route_dist(self, a, b):
@@ -963,7 +965,7 @@ class Heuristicas():
     #     edges_b = self._get_edges_set(b)
     #     return len(edges_a - edges_b)
 
-    def _ref_set_update(self, pop, size, elite=1):
+    def _ref_set_update(self, pop, ref_size, diver=1):
         pop.sort()
         # remover individuos repetidos
         pop_size = len(pop)
@@ -974,7 +976,7 @@ class Heuristicas():
                     del pop[i]
                     del edges[i]
                     break
-        pop = pop[:max(int(elite * pop_size), size)]
+        pop = pop[:max(int(diver * pop_size), ref_size)]
         pop_size = len(pop)
         d = np.zeros(shape=[pop_size, pop_size])
         for i in range(pop_size):
@@ -987,7 +989,7 @@ class Heuristicas():
         for i in range(pop_size):
             dist[i] = d[0, i]
         # print(max(dist))
-        for k in range(1, size):
+        for k in range(1, ref_size):
             p_idx = np.argmax(dist)
             p = pop[p_idx]
             ref.append(p)
@@ -995,6 +997,48 @@ class Heuristicas():
                 dist[i] = min(dist[i], d[p_idx, i])
 
         return ref
+
+    # def _comb_sols(self, sols: list):
+    #     """
+    #     Combina uma lista de soluções em uma nova solução
+    #     :param sols: lista de soluções
+    #     :return: tupla (custo, solução)
+    #     """
+    #     n = self.cvrp.n
+    #     d = self.cvrp.d
+    #     c = self.cvrp.c
+    #     visited = np.zeros(n, dtype=bool)
+    #     visited[0] = True
+    #     petalas = []
+    #     for cost, sol in sols:
+    #         for r in sol:
+    #             petalas.append((tsp.cost(r, c), deepcopy(r)))
+    #
+    #     new_sol = []
+    #
+    #     while len(petalas) > 0:
+    #         p = max(petalas, key=lambda a: d[a[1]].sum() / a[0])
+    #
+    #         if len(p[1]) >= 2:
+    #             visited[p[1]] = True
+    #             new_sol.append(p[1])
+    #
+    #         petalas.remove(p)
+    #
+    #         for score, r in petalas:
+    #             for i in reversed(range(1, len(r))):
+    #                 if visited[r[i]]:
+    #                     del r[i]
+    #         for i in reversed(range(len(petalas))):
+    #             if len(petalas[i][1]) < 2:
+    #                 del petalas[i]
+    #
+    #     assert self.cvrp.is_feasible(new_sol)
+    #     cost, new_sol = self.Clarke_n_Wright(new_sol)
+    #     # if len(new_sol) == len(sols[1][1]):
+    #     cost, new_sol = self.VND(new_sol, cost)
+    #
+    #     return cost, new_sol
 
     def _comb_sols(self, sols: list):
         """
@@ -1019,13 +1063,12 @@ class Heuristicas():
 
         assert self.cvrp.is_feasible(new_sol)
         cost, new_sol = self.Clarke_n_Wright(new_sol)
-        if len(new_sol) == len(sols[1][1]):
-            cost, new_sol = self.VND(new_sol, cost)
+        cost, new_sol = self.VND(new_sol, cost)
 
         return cost, new_sol
 
     @timeit
-    def scatter_search(self, ite=100, ini_pop_size=20, ref_size=10, subset_size=3, grasp_k=3, diver=.6,
+    def scatter_search(self, ite=100, ini_pop_size=20, ref_size=10, subset_size=3, grasp_k=5, diver=.7,
                        mut_factor=0.02):
         """
         Aplica a meta-heurística de busca difusa
