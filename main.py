@@ -23,7 +23,6 @@ if __name__ == '__main__':
     # cvrp.plot(edges=edges)
     # exit(0)
 
-
     print(cvrp)
 
     # cost,route = heuristicas.Clarke_n_Wright()
@@ -37,7 +36,8 @@ if __name__ == '__main__':
     # cost, route = heuristicas.tabu_search(500, 2, 20)
     # print(cvrp.route_cost(route))
     # cvrp.plot(route=route)
-    cost, route = heuristicas.scatter_search(ite=50, ini_pop_size=100, ref_size=5, subset_size=3)
+    # cost, route = heuristicas.scatter_search(ite=50, ini_pop_size=100, ref_size=5, subset_size=3)
     # cost, route = heuristicas.ils(500, 1)
+    cost, route = heuristicas.ant_colony(ite=10000, ants=100, online=False)
     print(cvrp.route_cost(route))
     cvrp.plot(routes=route)

@@ -1040,7 +1040,7 @@ class Heuristicas():
     #
     #     return cost, new_sol
 
-    def _comb_sols(self, sols: list):
+    def _recombination(self, sols: list):
         """
         Combina uma lista de soluções em uma nova solução
         :param sols: lista de soluções
@@ -1105,7 +1105,7 @@ class Heuristicas():
             # criar nova geração
             offspring = []
             for sub_set in itertools.combinations(ref_set, subset_size):
-                s = self._comb_sols(sub_set)
+                s = self._recombination(sub_set)
                 offspring.append(s)
 
             # atualizar conjunto de referência
@@ -1127,5 +1127,118 @@ class Heuristicas():
                 print(f'\n{i + 1} SS  {best_cost} ')
                 if self.plot:
                     self.cvrp.plot(routes=best_route, clear_edges=True, stop=False)
+
+        return best_cost, best_route
+
+    def _ant_run(self, trail):
+
+        n = self.cvrp.n
+        d = self.cvrp.d
+        q = self.cvrp.q
+        c = self.cvrp.c
+        sol = []
+
+        visited = np.zeros([n], dtype=bool)
+
+        cont = 1
+        while cont < n:
+            path = [0]
+            v = 0
+            load = 0
+            while True:
+                can = [i for i in range(n) if not visited[i] and load + d[i] <= q and v != i]
+                if len(can) == 0:
+                    break
+                weight = [max(trail[v, i], self._min_trail) for i in can]
+
+                # heuristic
+                # weight = weight + np.array([1 / (c[v, i] + self._min_trail) for i in can])
+
+                v = rd.choices(can, weights=weight)[0]
+                if v == 0:
+                    if load < .7 * q and len(can) > 1:
+                        continue
+                    else:
+                        break
+                else:
+                    path.append(v)
+                    load += d[v]
+                    visited[v] = True
+                    cont += 1
+            sol.append(path)
+
+        return sol
+
+    _min_trail = 0.001
+
+    def _reinforcement(self, sol, valor, trail):
+        for r in sol:
+            for i in range(1, len(r)):
+                trail[r[i - 1], r[i]] += valor
+            trail[r[-1], r[0]] += valor
+
+    @timeit
+    def ant_colony(self, ite: int, ants: int, evapor=0.1, online=True, update_by='quality', k=1):
+        """
+        Ant Colony Optimization
+
+        :param ite: número de iterações
+        :param ants: número de formigas
+        :param evapor: taxa de evaporação
+        :param online:
+            True - a trilha é atualizada quando cada formiga termina seu percurso (Online delayed pheromone update);
+            False - a trilha é atualizada apenas após todas as formigas terminarem seu percurso (offline)
+        :param update_by:
+            Usado quando online == False
+            'quality' - as formigas que geraram as k melhores soluções depositam um valor constante às respectivas trilhas.
+            'rank' - as formigas que geraram as k melhores soluções depositam um valor relativo as seu rank às respectivas trilhas.
+            'worst' - a formiga que gerou a pior solução decrementa o feromônio  da sua trilha
+            'elitist' - a melhor solução até então gerada adiciona feromônio à sua trilha
+        :return:tupla (custo, solução)
+        """
+        n = self.cvrp.n
+        trail = np.zeros(shape=[n, n], dtype=float)
+        best_route = None
+        best_cost = np.inf
+
+        if online:
+            # online delayed update
+            best_cost, best_route = self.Clarke_n_Wright()
+            print(f'\n{0} AC  {best_cost} ')
+            UB = best_cost * 1.1
+            for i in range(ite):
+                for f in range(ants):
+                    sol = self._ant_run(trail)
+                    cost = self.cvrp.route_cost(sol)
+                    print(cost)
+                    cost, sol = self.VND(sol, cost)
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_route = deepcopy(sol)
+                        print(f'\n{i + 1} AC  {best_cost} ')
+                    # evaporação
+                    trail += (1 - evapor) * trail
+                    # reforço
+                    delta = (UB - cost) / UB
+                    if delta > 0:
+                        self._reinforcement(sol, delta, trail)
+
+        # else:
+        #     # offline update
+        #     trail_aux = np.zeros(shape=[n, n], dtype=float)
+        #     for i in range(ite):
+        #         trail_aux.fill(0)
+        #         for f in range(ants):
+        #             sol = self._ant_run(trail)
+        #             cost = self.cvrp.route_cost(sol)
+        #             cost, sol = self.VND(sol, cost)
+        #
+        #             if cost < best_cost:
+        #                 best_cost = cost
+        #                 best_route = deepcopy(sol)
+        #                 print(f'\n{i + 1} AC  {best_cost} ')
+        #
+        #             self._reinforcement(sol, cost - 1763, trail_aux)
+        #         trail = 0.5 * trail + 0.5 * trail_aux
 
         return best_cost, best_route
