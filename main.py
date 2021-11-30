@@ -38,6 +38,7 @@ if __name__ == '__main__':
     # cvrp.plot(route=route)
     # cost, route = heuristicas.scatter_search(ite=50, ini_pop_size=100, ref_size=5, subset_size=3)
     # cost, route = heuristicas.ils(500, 1)
-    cost, route = heuristicas.ant_colony(ite=10000, ants=100, online=False)
+    cost, route = heuristicas.ant_colony(ite=100, ants=30, online=False, update_by='rank', k=10, worst=True,
+                                         elitist=True, evapor=0.3)
     print(cvrp.route_cost(route))
     cvrp.plot(routes=route)

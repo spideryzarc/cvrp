@@ -7,7 +7,7 @@ import os
 import networkx as nx
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import pdist, squareform
-
+from scipy.stats import logistic
 from collections import namedtuple
 
 from itertools import combinations
@@ -1130,6 +1130,9 @@ class Heuristicas():
 
         return best_cost, best_route
 
+    def _sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
     def _ant_run(self, trail):
 
         n = self.cvrp.n
@@ -1138,13 +1141,15 @@ class Heuristicas():
         c = self.cvrp.c
         sol = []
 
+        maxc = c.max()
+
         visited = np.zeros([n], dtype=bool)
 
         cont = 1
         while cont < n:
             path = [0]
             v = 0
-            load = 0
+            load = float(0)
             while True:
                 can = [i for i in range(n) if not visited[i] and load + d[i] <= q and v != i]
                 if len(can) == 0:
@@ -1152,10 +1157,16 @@ class Heuristicas():
                 weight = [max(trail[v, i], self._min_trail) for i in can]
 
                 # heuristic
-                # weight = weight + np.array([1 / (c[v, i] + self._min_trail) for i in can])
+                weight = weight * np.array([1 + (maxc - c[v, i]) / maxc for i in can])
+                if v != 0:
+                    if load < q * 0.5:
+                        weight = weight * np.array([2 if c[0, i] > c[0, v] else 1 for i in can])
+                    else:
+                        weight = weight * np.array([2 if c[0, i] < c[0, v] else 1 for i in can])
 
                 v = rd.choices(can, weights=weight)[0]
                 if v == 0:
+                    # break
                     if load < .7 * q and len(can) > 1:
                         continue
                     else:
@@ -1172,13 +1183,33 @@ class Heuristicas():
     _min_trail = 0.001
 
     def _reinforcement(self, sol, valor, trail):
+        c = self.cvrp.c
         for r in sol:
-            for i in range(1, len(r)):
-                trail[r[i - 1], r[i]] += valor
-            trail[r[-1], r[0]] += valor
+            if c[r[0], r[1]] < c[r[-1], r[0]]:
+                for i in range(1, len(r)):
+                    trail[r[i - 1], r[i]] += valor
+                trail[r[-1], r[0]] += valor
+            else:
+                for i in range(1, len(r)):
+                    trail[r[i], r[i - 1]] += valor
+                trail[r[0], r[-1]] += valor
+
+    def _plot_trail(self, trail: np.matrix):
+        G = self.cvrp.graph
+        G.clear_edges()
+        maxw = trail.max() / 2
+        for i, j in itertools.permutations(range(len(trail)), 2):
+            if trail[i, j] > 0:
+                G.add_edge(i, j, weight=trail[i, j] / maxw)
+        weights = list(nx.get_edge_attributes(G, 'weight').values())
+        plt.clf()
+        nx.draw(G, self.cvrp.coord, with_labels=True, node_size=120, font_size=8, width=weights)
+        plt.draw()
+        plt.pause(.1)
 
     @timeit
-    def ant_colony(self, ite: int, ants: int, evapor=0.1, online=True, update_by='quality', k=1):
+    def ant_colony(self, ite: int, ants: int, evapor=0.1, online=True, update_by='quality', k=1, worst=False,
+                   elitist=False):
         """
         Ant Colony Optimization
 
@@ -1192,8 +1223,8 @@ class Heuristicas():
             Usado quando online == False
             'quality' - as formigas que geraram as k melhores soluções depositam um valor constante às respectivas trilhas.
             'rank' - as formigas que geraram as k melhores soluções depositam um valor relativo as seu rank às respectivas trilhas.
-            'worst' - a formiga que gerou a pior solução decrementa o feromônio  da sua trilha
-            'elitist' - a melhor solução até então gerada adiciona feromônio à sua trilha
+        :param worst: True -  a formiga que gerou a pior solução decrementa o feromônio  da sua trilha
+        :param elitist: True- a melhor solução até então gerada adiciona feromônio à sua trilha
         :return:tupla (custo, solução)
         """
         n = self.cvrp.n
@@ -1210,7 +1241,6 @@ class Heuristicas():
                 for f in range(ants):
                     sol = self._ant_run(trail)
                     cost = self.cvrp.route_cost(sol)
-                    print(cost)
                     cost, sol = self.VND(sol, cost)
                     if cost < best_cost:
                         best_cost = cost
@@ -1220,25 +1250,45 @@ class Heuristicas():
                     trail += (1 - evapor) * trail
                     # reforço
                     delta = (UB - cost) / UB
-                    if delta > 0:
-                        self._reinforcement(sol, delta, trail)
+                    self._reinforcement(sol, delta, trail)
+                    self._plot_trail(trail)
 
-        # else:
-        #     # offline update
-        #     trail_aux = np.zeros(shape=[n, n], dtype=float)
-        #     for i in range(ite):
-        #         trail_aux.fill(0)
-        #         for f in range(ants):
-        #             sol = self._ant_run(trail)
-        #             cost = self.cvrp.route_cost(sol)
-        #             cost, sol = self.VND(sol, cost)
-        #
-        #             if cost < best_cost:
-        #                 best_cost = cost
-        #                 best_route = deepcopy(sol)
-        #                 print(f'\n{i + 1} AC  {best_cost} ')
-        #
-        #             self._reinforcement(sol, cost - 1763, trail_aux)
-        #         trail = 0.5 * trail + 0.5 * trail_aux
+        else:
+            # offline update
+            for i in range(ite):
+                # trail_aux.fill(0)
+                lista = []
+                for f in range(ants):
+                    sol = self._ant_run(trail)
+                    cost = self.cvrp.route_cost(sol)
+                    # print(cost)
+                    progress(f + 1, ants, f'Turno: {i + 1} \tLast Ant: {cost} \t Best: {best_cost}')
+                    cost, sol = self.VND(sol, cost)
+                    lista.append((cost, sol))
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_route = deepcopy(sol)
+                        # print(f'\n{i + 1} AC  {best_cost} ')
+                # evaporação
+                trail += (1 - evapor) * trail
+                # reforço
+                if worst:
+                    cost, sol = max(lista)
+                    self._reinforcement(sol, -1, trail)
+
+                if elitist:
+                    self._reinforcement(best_route, 1, trail)
+
+                if update_by == 'quality':
+                    lista.sort()
+                    for cost, sol in lista[:k]:
+                        self._reinforcement(sol, 1, trail)
+                elif update_by == 'rank':
+                    lista.sort()
+                    delta = k
+                    for cost, sol in lista[:k]:
+                        self._reinforcement(sol, delta, trail)
+                        delta -= 1
+                self._plot_trail(trail)
 
         return best_cost, best_route
