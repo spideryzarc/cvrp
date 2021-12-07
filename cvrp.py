@@ -1154,23 +1154,28 @@ class Heuristicas():
                 can = [i for i in range(n) if not visited[i] and load + d[i] <= q and v != i]
                 if len(can) == 0:
                     break
-                weight = [max(trail[v, i], self._min_trail) for i in can]
+                weight = np.array([max(trail[v, i], self._min_trail) for i in can])
 
                 # heuristic
-                weight = weight * np.array([1 + (maxc - c[v, i]) / maxc for i in can])
+                heu = np.array([(maxc - c[v, i]) / maxc for i in can])
                 if v != 0:
                     if load < q * 0.5:
-                        weight = weight * np.array([2 if c[0, i] > c[0, v] else 1 for i in can])
+                        heu *= np.array([2 if c[0, i] > c[0, v] else 1 for i in can])
                     else:
-                        weight = weight * np.array([2 if c[0, i] < c[0, v] else 1 for i in can])
+                        heu *= np.array([2 if c[0, i] < c[0, v] else 1 for i in can])
+
+                heu /= heu.max()
+                weight /= weight.max()  # normalizar
+
+                weight = weight * heu
 
                 v = rd.choices(can, weights=weight)[0]
                 if v == 0:
-                    # break
-                    if load < .7 * q and len(can) > 1:
-                        continue
-                    else:
-                        break
+                    break
+                    # if load < .5 * q and len(can) > 1:
+                    #     continue
+                    # else:
+                    #     break
                 else:
                     path.append(v)
                     load += d[v]
@@ -1205,7 +1210,7 @@ class Heuristicas():
         plt.clf()
         nx.draw(G, self.cvrp.coord, with_labels=True, node_size=120, font_size=8, width=weights)
         plt.draw()
-        plt.pause(.1)
+        plt.pause(.01)
 
     @timeit
     def ant_colony(self, ite: int, ants: int, evapor=0.1, online=True, update_by='quality', k=1, worst=False,
@@ -1236,22 +1241,25 @@ class Heuristicas():
             # online delayed update
             best_cost, best_route = self.Clarke_n_Wright()
             print(f'\n{0} AC  {best_cost} ')
-            UB = best_cost * 1.1
-            for i in range(ite):
-                for f in range(ants):
-                    sol = self._ant_run(trail)
-                    cost = self.cvrp.route_cost(sol)
-                    cost, sol = self.VND(sol, cost)
-                    if cost < best_cost:
-                        best_cost = cost
-                        best_route = deepcopy(sol)
-                        print(f'\n{i + 1} AC  {best_cost} ')
-                    # evaporação
-                    trail += (1 - evapor) * trail
-                    # reforço
-                    delta = (UB - cost) / UB
-                    self._reinforcement(sol, delta, trail)
-                    self._plot_trail(trail)
+            UB = best_cost * 2
+            ite_ants = ite * ants
+            for i in range(ite_ants):
+                sol = self._ant_run(trail)
+                cost = self.cvrp.route_cost(sol)
+                progress(i + 1, ite_ants, f'Ant: {i + 1} \tCost: {cost} \t Best: {best_cost}')
+                cost, sol = self.VND(sol, cost)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_route = deepcopy(sol)
+                    print(f'\n{i + 1} AC  {best_cost} ')
+                # evaporação
+                trail = (1 - evapor) * trail
+                # reforço
+                delta = (UB - cost) / UB
+                self._reinforcement(sol, delta, trail)
+                # self._plot_trail(trail)
+                if elitist:
+                    self._reinforcement(best_route, delta, trail)
 
         else:
             # offline update
@@ -1260,6 +1268,7 @@ class Heuristicas():
                 lista = []
                 for f in range(ants):
                     sol = self._ant_run(trail)
+                    # self.cvrp.plot(routes=sol)
                     cost = self.cvrp.route_cost(sol)
                     # print(cost)
                     progress(f + 1, ants, f'Turno: {i + 1} \tLast Ant: {cost} \t Best: {best_cost}')
@@ -1269,8 +1278,10 @@ class Heuristicas():
                         best_cost = cost
                         best_route = deepcopy(sol)
                         # print(f'\n{i + 1} AC  {best_cost} ')
+
                 # evaporação
-                trail += (1 - evapor) * trail
+                trail = (1 - evapor) * trail
+
                 # reforço
                 if worst:
                     cost, sol = max(lista)
