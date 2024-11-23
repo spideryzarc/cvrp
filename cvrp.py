@@ -135,16 +135,10 @@ class CVRP:
         pass
 
     def route_cost(self, routes):
-        """
-        Calcula o custo da solução
-
-        :param routes: Solução (lista de listas)
-        :return : float custo total
-        """
         cost = 0
         for r in routes:
-            for i in range(1, len(r)):
-                cost += self.c[r[i - 1], r[i]]
+            r = np.array(r)
+            cost += self.c[r[:-1], r[1:]].sum()
             cost += self.c[r[-1], r[0]]
         return cost
 
