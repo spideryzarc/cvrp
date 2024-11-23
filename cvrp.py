@@ -340,67 +340,75 @@ class Heuristicas():
     # @timeit
     def Clarke_n_Wright(self, routes=None):
         """
-        Aplica o algoritmo de Clarke and Wright paralelo
+        Optimized Clarke and Wright algorithm.
 
-        :param routes: Solução (lista de listas), caso seja passada uma solução,
-        o algoritmo se ocupa de tentar mesclar as rotas existentes nesta solução.
-        :return : tupla (custo, solução)
+        :param routes: Initial solution (list of lists)
+        :return: tuple (cost, routes)
         """
         n = self.cvrp.n
         d = self.cvrp.d
         q = self.cvrp.q
 
-        # cria n rotas triviais
+        # Initialize each customer in its own route
         if routes is None:
-            routes = [[0, i] for i in range(1, n)]
+            routes = [[0, i, 0] for i in range(1, n)]
         else:
-            for i in reversed(range(len(routes))):
-                if len(routes[i]) <= 1:
-                    del routes[i]
+            # Ensure routes start and end at the depot and remove empty routes
+            routes = [([0] + r + [0]) if r[0] != 0 else r + [0] if r[-1] != 0 else r for r in routes if len(r) > 1]
 
-        load_r_zipped = [[d[r].sum(), r] for r in routes]
-        # calcular os 'savings'
-        s = self.saving
+        load = {idx: d[route[1:-1]].sum() for idx, route in enumerate(routes)}
+
+        # Compute savings for all pairs of customers
+        c = self.cvrp.c
+        s = [((i,j), c[i, 0] + c[0, j] - c[i, j]) for i in range(2, n) for j in range(1, i)]
+        # #filter savings for testing
+        # mean = np.mean([x[1] for x in s])
+        # std = np.std([x[1] for x in s])
+        # s = [ x for x in s if x[1] < mean + 2*std]        
+        # Sort savings in decreasing order
+        s.sort(key=lambda x: x[1], reverse=True)
+
+        # Map customers to routes
+        route_map = {route[1]: idx for idx, route in enumerate(routes)}
+        route_ends = {idx: (route[1], route[-2]) for idx, route in enumerate(routes)}
+
+        # Merge routes according to savings
+        for (i, j), saving in s:
+            ri = route_map[i]
+            rj = route_map[j]            
+            if ri == rj: # Same route
+                continue            
+            if i not in route_ends[ri] and j not in route_ends[rj]: # Check if i and j are both ends of their routes
+                continue
+            total_load = load[ri] + load[rj]
+            if total_load > q: # Check capacity constraint
+                continue
+            #reverse routes if necessary, i most be the end of ri and j the start of rj
+            if i != route_ends[ri][1]:
+                routes[ri][:] = routes[ri][::-1]
+                route_ends[ri] = (routes[ri][1], routes[ri][-2])
+            if j != route_ends[rj][0]:
+                routes[rj][:] = routes[rj][::-1]
+                route_ends[rj] = (routes[rj][1], routes[rj][-2])
+            # Merge routes
+            routes[ri].pop() # remove depot 
+            routes[ri].extend(routes[rj][1:]) # merge routes
+            load[ri] = total_load # update load
+            # Update mappings
+            for customer in routes[rj][1:-1]:
+                route_map[customer] = ri
+            route_ends[ri] = (routes[ri][1], routes[ri][-2])
+            # Remove merged route
+            routes[rj].clear()
+            # del route_ends[rj]
+            # del load[rj]
+            if self.plot:
+                self.cvrp.plot(routes=[r for r in routes if r], clear_edges=True, stop=False)                
+        # Remove empty routes
+        routes = [r for r in routes if r]
 
         cost = self.cvrp.route_cost(routes)
-        # concatenar rotas
-        max_s = self.max_saving
-        while True:
-            argmax = None
-            max_val = 0
-            load_r_zipped.sort(key=lambda a: max_s[a[1][-1]], reverse=True)
-            for k, rk in enumerate(load_r_zipped):
-                if max_s[rk[1][-1]] <= max_val:
-                    break
-                for l, rl in enumerate(load_r_zipped):
-                    if (k != l) and max_val < s[rk[1][-1], rl[1][1]] and rk[0] + rl[0] <= q:
-                        # adaptação para o tabu
-                        if self.tabu_list is not None:
-                            if self._is_tabu(rk[1] + rl[1][1:], cost - s[rk[1][-1], rl[1][1]]):
-                                continue
-                        argmax = k, l
-                        max_val = s[rk[1][-1], rl[1][1]]
-
-            if argmax is not None:
-                # concatenar
-                k, l = argmax
-                cost -= s[load_r_zipped[k][1][-1], load_r_zipped[l][1][1]]
-                load_r_zipped[k][1].extend(load_r_zipped[l][1][1:])
-                load_r_zipped[l][1].clear()
-                load_r_zipped[k][0] += load_r_zipped[l][0]
-                del load_r_zipped[l]
-                if self.plot:
-                    self.cvrp.plot(routes=routes, clear_edges=True, stop=False)
-            else:
-                break
-
-        # remover rotas vazias
-        for i in reversed(range(len(routes))):
-            if len(routes[i]) <= 1:
-                del routes[i]
-
         assert self.cvrp.is_feasible(routes)
-        assert cost == self.cvrp.route_cost(routes)
         return cost, routes
 
     def _next_fit(self, order):
@@ -534,8 +542,7 @@ class Heuristicas():
                             if add_cost < min_val and add_cost + rem_cost < -1e-3:
                                 # adaptação para o tabu
                                 if self.tabu_list is not None:
-                                    if self._is_tabu(set(ra) - set([vi]), cost + add_cost + rem_cost) or self._is_tabu(
-                                            rb + [vi], cost + add_cost + rem_cost):
+                                    if self._is_tabu(rk[1] + rl[1][1:], cost - s[rk[1][-1], rl[1][1]]):
                                         continue
                                 min_val = add_cost
                                 min_arg = b, insert_pos
